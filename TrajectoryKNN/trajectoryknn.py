@@ -1,3 +1,14 @@
+# -*- coding: utf-8 -*-
+"""
+@File    :   trajectoryknn.py
+@Time    :   2024/08/01 
+@Author  :   Dawn
+@Version :   1.0
+@Desc    :   Trajectoryknn for single cell
+"""
+
+
+
 from sklearn.neighbors import NearestNeighbors
 from pyecharts import options as opts
 from pyecharts.charts import Sankey
