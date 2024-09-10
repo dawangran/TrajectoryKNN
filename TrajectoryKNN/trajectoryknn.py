@@ -108,7 +108,7 @@ def generate_distance(data_indices, data_distances):
 
 
 
-def traject_knn(pca_data, meta_data, stage_list, label, cell_number=300, max_cell_number=5, knn_number=10):
+def traject_knn(pca_data,meta_data,stage_list,label,cell_number=300,min_wight=5,knn_number=10,nmads=5):
     """
     Perform trajectory analysis using K-nearest neighbors (KNN) algorithm.
 
@@ -118,8 +118,9 @@ def traject_knn(pca_data, meta_data, stage_list, label, cell_number=300, max_cel
     stage_list (list): List of stages for trajectory analysis.
     label (str): Column name for labels.
     cell_number (int): Number of cells for sampling.
-    max_cell_number (int): Maximum number of cells.
+    min_wight (int): Minimum weight for filtering.
     knn_number (int): Number of nearest neighbors for KNN.
+    nmads (int): Number of median absolute deviations for outlier filtering.
 
     Returns:
     data_cell (pd.DataFrame): Processed data for cells.
@@ -129,106 +130,100 @@ def traject_knn(pca_data, meta_data, stage_list, label, cell_number=300, max_cel
     data_barcode (pd.DataFrame): Processed data for barcodes.
     """
     
-    if not isinstance(pca_data, pd.DataFrame) or not isinstance(meta_data, pd.DataFrame):
-        raise ValueError("pca_data and meta_data must be pandas DataFrames")
+    # Initialize lists to store processed data
+    data_list=[]
+    df_indices_list=[]
+    df_barcode_list=[]
+    df_distances_list=[]
     
-    if not isinstance(stage_list, list) or not all(isinstance(stage, str) for stage in stage_list):
-        raise ValueError("stage_list must be a list of strings")
+    # Iterate over stages for trajectory analysis
+    for i in range(len(stage_list)-1):
+        
+        ref_meta=meta_data[meta_data['state']==stage_list[i]]
+        target_meta=meta_data[meta_data['state']==stage_list[i+1]]
     
-    if not isinstance(label, str):
-        raise ValueError("label must be a string")
+        # Extract metadata for reference and target stages
+        grouped = target_meta.groupby(label)
+        label_counts = dict(grouped.size())
+        target_meta_list=[]
+        for k,v  in label_counts.items():
+            target_meta_sub=target_meta[target_meta[label]==k]
+            if v <cell_number:
+                target_meta_list.append(target_meta_sub)
+            else:
+                target_meta_sub=target_meta_sub.sample(n=cell_number, random_state=1)
+                target_meta_list.append(target_meta_sub)
+        target_meta=pd.concat(target_meta_list)
     
-    if not isinstance(cell_number, int) or cell_number <= 0:
-        raise ValueError("cell_number must be a positive integer")
+        ref_cell=ref_meta.index.to_list()
+        target_cell=target_meta.index.to_list()
+        ref_pca_data=pca_data.loc[ref_cell]
+        target_pca_data=pca_data.loc[target_cell]
     
-    if not isinstance(max_cell_number, int) or max_cell_number <= 0:
-        raise ValueError("max_cell_number must be a positive integer")
+        # KNN model fitting
+        nbrs = NearestNeighbors(n_neighbors=knn_number, algorithm='auto',radius=1).fit(target_pca_data)
+        distances, indices = nbrs.kneighbors(ref_pca_data)
     
-    if not isinstance(knn_number, int) or knn_number <= 0:
-        raise ValueError("knn_number must be a positive integer")
+        # Calculate cell trajectories
+        df_distances=pd.DataFrame(distances)
+        seurat_clusters_dict={i:v for i,v in enumerate(target_meta[label])}
+        barcode_dict={i:v for i,v in enumerate(target_meta['barcode'])}
+        df_indices=pd.DataFrame(indices)
+        df_indices_replaced = df_indices.replace(seurat_clusters_dict)
+        df_barcode = df_indices.replace(barcode_dict)
+        df_indices_replaced['most_frequent'] = df_indices_replaced.apply(most_frequent_with_positions, axis=1)
     
-    data_list = []
-    df_indices_list = []
-    df_barcode_list = []
-    df_distances_list = []
+        target_list=generate_labels(df_indices_replaced,df_distances)
+        df_indices_replaced['target']=target_list
+        df_indices_replaced['barcode']=ref_cell
+        df_indices_replaced['most_frequent_number']=[len(j[i]) for i,j in zip(df_indices_replaced['target'],df_indices_replaced['most_frequent'])]
+        df_indices_replaced['stage']="{}_{}".format(stage_list[i],stage_list[i+1])
+        
+        sub_data=pd.DataFrame({"barcode":ref_cell,"source":ref_meta[label].to_list(),"target":target_list})
+        sub_data['source_stage']=stage_list[i]
+        sub_data['target_stage']=stage_list[i+1]
+        
+        df_barcode['barcode']=ref_cell
+        df_barcode['stage']="{}_{}".format(stage_list[i],stage_list[i+1])
+        df_distances['stage']="{}_{}".format(stage_list[i],stage_list[i+1])
+        df_distances['barcode']=ref_cell
     
-    try:
-        for i in range(len(stage_list) - 1):
-            
-            ref_meta = meta_data[meta_data['state'] == stage_list[i]]
-            target_meta = meta_data[meta_data['state'] == stage_list[i + 1]]
-        
-            # Sample target label data
-            grouped = target_meta.groupby(label)
-            label_counts = dict(grouped.size())
-            target_meta_list = []
-            for k, v in label_counts.items():
-                target_meta_sub = target_meta[target_meta[label] == k]
-                if v < cell_number:
-                    target_meta_list.append(target_meta_sub)
-                else:
-                    target_meta_sub = target_meta_sub.sample(n=cell_number, random_state=1)
-                    target_meta_list.append(target_meta_sub)
-            target_meta = pd.concat(target_meta_list)
-        
-            ref_cell = ref_meta.index.to_list()
-            target_cell = target_meta.index.to_list()
-            ref_pca_data = pca_data.loc[ref_cell]
-            target_pca_data = pca_data.loc[target_cell]
-        
-            # KNN model
-            nbrs = NearestNeighbors(n_neighbors=knn_number, algorithm='auto', radius=1).fit(target_pca_data)
-            distances, indices = nbrs.kneighbors(ref_pca_data)
-        
-            df_distances = pd.DataFrame(distances)
-            seurat_clusters_dict = {i: v for i, v in enumerate(target_meta[label])}
-            barcode_dict = {i: v for i, v in enumerate(target_meta['barcode'])}
-            df_indices = pd.DataFrame(indices)
-            df_indices_replaced = df_indices.replace(seurat_clusters_dict)
-            df_barcode = df_indices.replace(barcode_dict)
-            df_indices_replaced['most_frequent'] = df_indices_replaced.apply(most_frequent_with_positions, axis=1)
-        
-            target_list = generate_labels(df_indices_replaced, df_distances)
-            df_indices_replaced['target'] = target_list
-            df_indices_replaced['barcode'] = ref_cell
-            df_indices_replaced['most_frequent_number'] = [len(j[i]) for i, j in zip(df_indices_replaced['target'], df_indices_replaced['most_frequent'])]
-            df_indices_replaced['stage'] = "{}_{}".format(stage_list[i], stage_list[i + 1])
-            
-            sub_data = pd.DataFrame({"barcode": ref_cell, "source": ref_meta[label].to_list(), "target": target_list})
-            sub_data['source_stage'] = stage_list[i]
-            sub_data['target_stage'] = stage_list[i + 1]
-            
-            df_barcode['barcode'] = ref_cell
-            df_barcode['stage'] = "{}_{}".format(stage_list[i], stage_list[i + 1])
-            df_distances['stage'] = "{}_{}".format(stage_list[i], stage_list[i + 1])
-            df_distances['barcode'] = ref_cell
-        
-            out_cell = list(df_indices_replaced[df_indices_replaced['most_frequent_number'] < max_cell_number].index)
-            print("filter cell: {}, {}_{}".format(len(out_cell), stage_list[i], stage_list[i + 1]))
-            
-            df_barcode = df_barcode[~df_barcode.index.isin(out_cell)]
-            sub_data = sub_data[~sub_data.index.isin(out_cell)]
-            df_indices_replaced = df_indices_replaced[~df_indices_replaced.index.isin(out_cell)]
-            df_distances = df_distances[~df_distances.index.isin(out_cell)]
-            
-            data_list.append(sub_data)
-            df_indices_list.append(df_indices_replaced)
-            df_barcode_list.append(df_barcode)
-            df_distances_list.append(df_distances)
-        
-        data_cell = pd.concat(data_list)
-        data_cell['source_label'] = ["{}_{}".format(j, i) for i, j in zip(data_cell['source'], data_cell['source_stage'])]
-        data_cell['target_label'] = ["{}_{}".format(j, i) for i, j in zip(data_cell['target'], data_cell['target_stage'])]
-        data_cluster = data_cell.groupby(['source_label', 'target_label']).agg("count")[['barcode']]
-        data_cluster = data_cluster.reset_index()
-        data_indices = pd.concat(df_indices_list)
-        data_distances = pd.concat(df_distances_list)
-        data_barcode = pd.concat(df_barcode_list)
+        # Filter out cells with low weights
+        out_cell_1=list(df_indices_replaced[df_indices_replaced['most_frequent_number']<= min_wight].index)
+        print("{}_{} : step1. filter weight cell {}".format(stage_list[i],stage_list[i+1],len(out_cell_1)))
+        df_barcode=df_barcode[~df_barcode.index.isin(out_cell_1)]
+        sub_data=sub_data[~sub_data.index.isin(out_cell_1)]
+        df_indices_replaced=df_indices_replaced[~df_indices_replaced.index.isin(out_cell_1)]
+        df_distances=df_distances[~df_distances.index.isin(out_cell_1)]
 
-        return data_cell, data_cluster, data_indices, data_distances, data_barcode
-    
-    except Exception as e:
-        print(f"An error occurred: {e}")
+        # Filter out cells with large deviations
+        df_indices_replaced['distance']= generate_distance(df_indices_replaced, df_distances)
+        df_indices_replaced['abs_deviation'] = np.abs(df_indices_replaced['distance'] - np.median(df_indices_replaced['distance']))
+        mads = nmads * np.median(df_indices_replaced['abs_deviation'])
+        out_cell_2=list(df_indices_replaced[df_indices_replaced['abs_deviation']>mads].index)
+        print("{}_{} : step2. filter distance cell {}".format(stage_list[i],stage_list[i+1],len(out_cell_2)))
+        df_barcode=df_barcode[~df_barcode.index.isin(out_cell_2)]
+        sub_data=sub_data[~sub_data.index.isin(out_cell_2)]
+        df_indices_replaced=df_indices_replaced[~df_indices_replaced.index.isin(out_cell_2)]
+        df_distances=df_distances[~df_distances.index.isin(out_cell_2)]
+        
+        # Append processed data to lists
+        data_list.append(sub_data)
+        df_indices_list.append(df_indices_replaced)
+        df_barcode_list.append(df_barcode)
+        df_distances_list.append(df_distances)
+        
+    # Combine results
+    data_cell=pd.concat(data_list)
+    data_cell['source_label']=["{}_{}".format(j,i) for i,j in zip(data_cell['source'],data_cell['source_stage'])]
+    data_cell['target_label']=["{}_{}".format(j,i) for i,j in zip(data_cell['target'],data_cell['target_stage'])]
+    data_cluster=data_cell.groupby(['source_label','target_label']).agg("count")[['barcode']]
+    data_cluster=data_cluster.reset_index()
+    data_indices=pd.concat(df_indices_list)
+    data_distances=pd.concat(df_distances_list)
+    data_barcode=pd.concat(df_barcode_list)
+
+    return data_cell,data_cluster,data_indices,data_distances,df_barcode
         
         
 
@@ -302,6 +297,7 @@ def plot_sankey_chart(nodes, links, chart_title="Sankey Diagram", chart_width="2
                 label_opts=opts.LabelOpts(position="right"),
             )
             .set_global_opts(title_opts=opts.TitleOpts(title=chart_title))
+            .render("image.html")
         )
 
         return c
