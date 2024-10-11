@@ -1,0 +1,11 @@
+.DS_Store
+.gitattributes
+README.md
+env.yaml
+setup.py
+src/TrajectoryKNN/__init__.py
+src/TrajectoryKNN/trajectoryknn.py
+src/TrajectoryKNN.egg-info/PKG-INFO
+src/TrajectoryKNN.egg-info/SOURCES.txt
+src/TrajectoryKNN.egg-info/dependency_links.txt
+src/TrajectoryKNN.egg-info/top_level.txt

@@ -1,3 +1,21 @@
+Metadata-Version: 2.1
+Name: TrajectoryKNN
+Version: 1.0.0
+Summary: Trajectory by KNN
+Home-page: https://github.com/dawangran/TrajectoryKNN
+Author: Dawn
+Author-email: 605547565@qq.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires: pandas
+Requires: scanpy
+Requires: numpy
+Requires: anndata
+Requires: sklearn
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+
 # TrajectoryKNN: Single-Cell Trajectory Analysis with k-Nearest Neighbors Algorithm
 
 
